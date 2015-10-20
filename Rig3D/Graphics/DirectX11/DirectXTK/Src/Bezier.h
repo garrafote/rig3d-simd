@@ -52,7 +52,7 @@ namespace Bezier
     }
 
 
-    // Creates vertices for a patch that is tessellated at the specified level.
+    // Creates mBezierVertices for a patch that is tessellated at the specified level.
     // Calls the specified outputVertex function for each generated vertex,
     // passing the position, normal, and texture coordinate as parameters.
     template<typename TOutputFunc>

@@ -242,7 +242,7 @@ _Use_decl_annotations_
 void GeometricPrimitive::Impl::Initialize(ID3D11DeviceContext* deviceContext, VertexCollection& vertices, IndexCollection& indices, bool rhcoords, bool invertn)
 {
     if ( vertices.size() >= USHRT_MAX )
-        throw std::exception("Too many vertices for 16-bit index buffer");
+        throw std::exception("Too many mBezierVertices for 16-bit index buffer");
 
     if ( !rhcoords )
         ReverseWinding( indices, vertices );
@@ -460,7 +460,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateBox(_In_ ID3D11Dev
         indices.push_back(vbase + 2);
         indices.push_back(vbase + 3);
 
-        // Four vertices per face.
+        // Four mBezierVertices per face.
         vertices.push_back(VertexPositionNormalTexture((normal - side1 - side2) * tsize, normal, textureCoordinates[0]));
         vertices.push_back(VertexPositionNormalTexture((normal - side1 + side2) * tsize, normal, textureCoordinates[1]));
         vertices.push_back(VertexPositionNormalTexture((normal + side1 + side2) * tsize, normal, textureCoordinates[2]));
@@ -495,7 +495,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateSphere(_In_ ID3D11
 
     float radius = diameter / 2;
 
-    // Create rings of vertices at progressively higher latitudes.
+    // Create rings of mBezierVertices at progressively higher latitudes.
     for (size_t i = 0; i <= verticalSegments; i++)
     {
         float v = 1 - (float)i / verticalSegments;
@@ -505,7 +505,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateSphere(_In_ ID3D11
 
         XMScalarSinCos(&dy, &dxz, latitude);
 
-        // Create a single ring of vertices at this latitude.
+        // Create a single ring of mBezierVertices at this latitude.
         for (size_t j = 0; j <= horizontalSegments; j++)
         {
             float u = (float)j / horizontalSegments;
@@ -561,7 +561,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateSphere(_In_ ID3D11
 // Creates a geosphere primitive.
 std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateGeoSphere(_In_ ID3D11DeviceContext* deviceContext, float diameter, size_t tessellation, bool rhcoords)
 {
-    // An undirected edge between two vertices, represented by a pair of indexes into a vertex array.
+    // An undirected edge between two mBezierVertices, represented by a pair of indexes into a vertex array.
     // Becuse this edge is undirected, (a,b) is the same as (b,a).
     typedef std::pair<uint16_t, uint16_t> UndirectedEdge;
 
@@ -573,8 +573,8 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateGeoSphere(_In_ ID3
     };
 
     // Key: an edge
-    // Value: the index of the vertex which lies midway between the two vertices pointed to by the key value
-    // This map is used to avoid duplicating vertices when subdividing triangles along edges.
+    // Value: the index of the vertex which lies midway between the two mBezierVertices pointed to by the key value
+    // This map is used to avoid duplicating mBezierVertices when subdividing triangles along edges.
     typedef std::map<UndirectedEdge, uint16_t> EdgeSubdivisionMap;
 
 
@@ -610,7 +610,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateGeoSphere(_In_ ID3
     indices.insert(indices.begin(), std::begin(OctahedronIndices), std::end(OctahedronIndices));
 
     // We know these values by looking at the above index list for the octahedron. Despite the subdivisions that are
-    // about to go on, these values aren't ever going to change because the vertices don't move around in the array.
+    // about to go on, these values aren't ever going to change because the mBezierVertices don't move around in the array.
     // We'll need these values later on to fix the singularities that show up at the poles.
     const uint16_t northPoleIndex = 0;
     const uint16_t southPoleIndex = 5;
@@ -631,12 +631,12 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateGeoSphere(_In_ ID3
             // For each edge on this triangle, create a new vertex in the middle of that edge.
             // The winding order of the triangles we output are the same as the winding order of the inputs.
 
-            // Indices of the vertices making up this triangle
+            // Indices of the mBezierVertices making up this triangle
             uint16_t iv0 = indices[iTriangle*3+0];
             uint16_t iv1 = indices[iTriangle*3+1];
             uint16_t iv2 = indices[iTriangle*3+2];
             
-            // Get the new vertices
+            // Get the new mBezierVertices
             XMFLOAT3 v01; // vertex on the midpoint of v0 and v1
             XMFLOAT3 v12; // ditto v1 and v2
             XMFLOAT3 v20; // ditto v2 and v0
@@ -644,7 +644,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateGeoSphere(_In_ ID3
             uint16_t iv12; // index of v12
             uint16_t iv20; // index of v20
 
-            // Function that, when given the index of two vertices, creates a new vertex at the midpoint of those vertices.
+            // Function that, when given the index of two mBezierVertices, creates a new vertex at the midpoint of those mBezierVertices.
             auto divideEdge = [&](uint16_t i0, uint16_t i1, XMFLOAT3& outVertex, uint16_t& outIndex)
             {
                 const UndirectedEdge edge = makeUndirectedEdge(i0, i1);
@@ -661,7 +661,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateGeoSphere(_In_ ID3
                 {
                     // Haven't generated this vertex before: so add it now
 
-                    // outVertex = (vertices[i0] + vertices[i1]) / 2
+                    // outVertex = (mBezierVertices[i0] + mBezierVertices[i1]) / 2
                     XMStoreFloat3(
                         &outVertex,
                         XMVectorScale(
@@ -679,7 +679,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateGeoSphere(_In_ ID3
                 }
             };
 
-            // Add/get new vertices and their indices
+            // Add/get new mBezierVertices and their indices
             divideEdge(iv0, iv1, v01, iv01);
             divideEdge(iv1, iv2, v12, iv12);
             divideEdge(iv0, iv2, v20, iv20);
@@ -736,9 +736,9 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateGeoSphere(_In_ ID3
     // 1.0, not 0.98 to 0.0. If we don't do this fixup, there will be a visible seam across one side of the sphere.
     // 
     // Luckily this is relatively easy to fix. There is a straight edge which runs down the prime meridian of the
-    // completed sphere. If you imagine the vertices along that edge, they circumscribe a semicircular arc starting at
+    // completed sphere. If you imagine the mBezierVertices along that edge, they circumscribe a semicircular arc starting at
     // y=1 and ending at y=-1, and sweeping across the range of z=0 to z=1. x stays zero. It's along this edge that we
-    // need to duplicate our vertices - and provide the correct texture coordinates.
+    // need to duplicate our mBezierVertices - and provide the correct texture coordinates.
     size_t preFixupVertexCount = vertices.size();
     for (size_t i = 0; i < preFixupVertexCount; ++i)
     {
@@ -791,7 +791,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateGeoSphere(_In_ ID3
                 const VertexPositionNormalTexture& v1 = vertices[*triIndex1];
                 const VertexPositionNormalTexture& v2 = vertices[*triIndex2];
 
-                // check the other two vertices to see if we might need to fix this triangle
+                // check the other two mBezierVertices to see if we might need to fix this triangle
 
                 if (abs(v0.textureCoordinate.x - v1.textureCoordinate.x) > 0.5f ||
                     abs(v0.textureCoordinate.x - v2.textureCoordinate.x) > 0.5f)
@@ -847,7 +847,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateGeoSphere(_In_ ID3
             const auto& otherVertex0 = vertices[*pOtherIndex0];
             const auto& otherVertex1 = vertices[*pOtherIndex1];
 
-            // Calculate the texcoords for the new pole vertex, add it to the vertices and update the index
+            // Calculate the texcoords for the new pole vertex, add it to the mBezierVertices and update the index
             VertexPositionNormalTexture newPoleVertex = poleVertex;
             newPoleVertex.textureCoordinate.x = (otherVertex0.textureCoordinate.x + otherVertex1.textureCoordinate.x) / 2;
             newPoleVertex.textureCoordinate.y = poleVertex.textureCoordinate.y;
@@ -937,7 +937,7 @@ static void CreateCylinderCap(VertexCollection& vertices, IndexCollection& indic
         textureScale *= g_XMNegateX;
     }
 
-    // Create cap vertices.
+    // Create cap mBezierVertices.
     for (size_t i = 0; i < tessellation; i++)
     {
         XMVECTOR circleVector = GetCircleVector(i, tessellation);
@@ -1165,7 +1165,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateTetrahedron(_In_ I
         indices.push_back( base + 1 );
         indices.push_back( base + 2 );
  
-        // Duplicate vertices to use face normals
+        // Duplicate mBezierVertices to use face normals
         XMVECTOR position = XMVectorScale( verts[ v0 ], size );
         vertices.push_back( VertexPositionNormalTexture( position, normal, g_XMZero /* 0, 0 */ ) );
 
@@ -1234,7 +1234,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateOctahedron(_In_ ID
         indices.push_back( base + 1 );
         indices.push_back( base + 2 );
  
-        // Duplicate vertices to use face normals
+        // Duplicate mBezierVertices to use face normals
         XMVECTOR position = XMVectorScale( verts[ v0 ], size );
         vertices.push_back( VertexPositionNormalTexture( position, normal, g_XMZero /* 0, 0 */ ) );
 
@@ -1362,7 +1362,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateDodecahedron(_In_ 
         indices.push_back( base + 3 );
         indices.push_back( base + 4 );
 
-        // Duplicate vertices to use face normals
+        // Duplicate mBezierVertices to use face normals
         XMVECTOR position = XMVectorScale( verts[ v0 ], size );
         vertices.push_back( VertexPositionNormalTexture( position, normal, textureCoordinates[ textureIndex[t][0] ] ) );
 
@@ -1458,7 +1458,7 @@ std::unique_ptr<GeometricPrimitive> GeometricPrimitive::CreateIcosahedron(_In_ I
         indices.push_back( base + 1 );
         indices.push_back( base + 2 );
  
-        // Duplicate vertices to use face normals
+        // Duplicate mBezierVertices to use face normals
         XMVECTOR position = XMVectorScale( verts[ v0 ], size );
         vertices.push_back( VertexPositionNormalTexture( position, normal, g_XMZero /* 0, 0 */ ) );
 

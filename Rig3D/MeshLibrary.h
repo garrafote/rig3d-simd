@@ -136,7 +136,7 @@ namespace Rig3D
 					v3.UV = uvs[i[7] - 1];
 					v3.Normal = normals[i[8] - 1];
 
-					// Add the vertices to the vector
+					// Add the mBezierVertices to the vector
 					mVertices.push_back(v1);
 					mVertices.push_back(v2);
 					mVertices.push_back(v3);

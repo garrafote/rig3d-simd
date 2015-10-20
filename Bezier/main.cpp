@@ -26,39 +26,64 @@
 // other Alignment here..
 #endif
 
-typedef ALIGNED(16) cliqCity::graphicsMath::Vector4 vec4fa;
-typedef ALIGNED(16) cliqCity::graphicsMath::Matrix4 mat4fa;
-
 using namespace Rig3D;
 
 // cubic degree bezier curve
-class ALIGNED(16) Bezier
+class Bezier
 {
 public:
-	vec4fa p0;
-	vec4fa p1;
-	vec4fa p2;
-	vec4fa p3;
+	union
+	{
+		struct
+		{
+			vec4f p0;
+			vec4f p1;
+			vec4f p2;
+			vec4f p3;
+		};
+		mat4f p;
+	};
 
 	Bezier() { }
 	~Bezier() { }
 
-	void Evaluate(const float time, vec4fa* result)
+	// Optimized SISD Cubic Bezier equation
+	// Equation based on this article:
+	// http://www.idav.ucdavis.edu/education/CAGDNotes/Matrix-Cubic-Bezier-Curve/Matrix-Cubic-Bezier-Curve.html
+	void Evaluate(const float time, vec4f* result)
 	{
-		static mat4fa mat = mat4fa(
+		static mat4f m = mat4f(
 			 1,  0,  0,  0,
 			-3,  3,  0,  0,
 			 3, -6,  3,  0, 
 			-1,  3, -3,  1);
 
-		vec4fa t(1, time, time*time, time*time*time);
+		vec4f t = vec4f(1.0f, time, time*time, time*time*time);
+
+		auto m0 = m.u;
+		auto m1 = m.v;
+		auto m2 = m.w;
+		auto m3 = m.t;
+
+		vec4f tM = vec4f(
+			t.data[0] * m0.data[0] + t.data[1] * m1.data[0] + t.data[2] * m2.data[0] + t.data[3] * m3.data[0],
+			t.data[0] * m0.data[1] + t.data[1] * m1.data[1] + t.data[2] * m2.data[1] + t.data[3] * m3.data[1],
+			t.data[0] * m0.data[2] + t.data[1] * m1.data[2] + t.data[2] * m2.data[2] + t.data[3] * m3.data[2],
+			t.data[0] * m0.data[3] + t.data[1] * m1.data[3] + t.data[2] * m2.data[3] + t.data[3] * m3.data[3]
+		);
+
+		(*result).data[0] = tM.data[0] * p0.data[0] + tM.data[1] * p1.data[0] + tM.data[2] * p2.data[0] + tM.data[3] * p3.data[0];
+		(*result).data[1] = tM.data[0] * p0.data[1] + tM.data[1] * p1.data[1] + tM.data[2] * p2.data[1] + tM.data[3] * p3.data[1];
+		(*result).data[2] = tM.data[0] * p0.data[2] + tM.data[1] * p1.data[2] + tM.data[2] * p2.data[2] + tM.data[3] * p3.data[2];
+		(*result).data[3] = tM.data[0] * p0.data[3] + tM.data[1] * p1.data[3] + tM.data[2] * p2.data[3] + tM.data[3] * p3.data[3];
 	}
 
+	// Optimized SIMD Cubic Bezier Equation
 	// Equation based on this article:
 	// http://www.idav.ucdavis.edu/education/CAGDNotes/Matrix-Cubic-Bezier-Curve/Matrix-Cubic-Bezier-Curve.html
-	void EvaluateSIMD(const float time, vec4fa* result)
+	void EvaluateSIMD(const float time, vec4f* result)
 	{
-		static mat4fa m = mat4fa(
+		static mat4f m = mat4f(
 			 1,  0,  0,  0,
 			-3,  3,  0,  0,
 			 3, -6,  3,  0, 
@@ -86,8 +111,14 @@ public:
 	}
 };
 
-static const int VERTEX_COUNT = 100;
-static const int INDEX_COUNT = (VERTEX_COUNT - 1) * 2;
+static const int BEZIER_VERTEX_COUNT = 100;
+static const int BEZIER_INDEX_COUNT = (BEZIER_VERTEX_COUNT - 1) * 2;
+
+static const int HANDLES_VERTEX_COUNT = 4;
+static const int HANDLES_INDEX_COUNT = 4;
+
+static const int CIRCLE_VERTEX_COUNT = 101;
+static const int CIRCLE_INDEX_COUNT = 300;
 
 class Rig3DSampleScene : public IScene, public virtual IRendererDelegate
 {
@@ -106,21 +137,28 @@ public:
 		mat4f mWorld;
 		mat4f mProjection;
 	};
-
-
+	
+	Bezier 					mBezier;
 	BezierMatrixBuffer		mMatrixBuffer;
-	IMesh*					mBezierMesh;
-	LinearAllocator			mAllocator;
 
+	LinearAllocator			mAllocator;
+	MeshLibrary<LinearAllocator> mMeshLibrary;
+	
+	IMesh*					mBezierMesh;
+	IMesh*					mCircleMesh;
+	IMesh*					mHandlesMesh;
+
+	BezierVertex			mBezierVertices[BEZIER_VERTEX_COUNT];
+	BezierVertex			mHandlesVertices[HANDLES_VERTEX_COUNT];
+	
 	DX3D11Renderer*			mRenderer;
 	ID3D11Device*			mDevice;
 	ID3D11DeviceContext*	mDeviceContext;
+
 	ID3D11Buffer*			mConstantBuffer;
 	ID3D11InputLayout*		mInputLayout;
 	ID3D11VertexShader*		mVertexShader;
 	ID3D11PixelShader*		mPixelShader;
-
-	MeshLibrary<LinearAllocator> mMeshLibrary;
 
 	Rig3DSampleScene() : mAllocator(1024)
 	{
@@ -130,6 +168,7 @@ public:
 		mOptions.mGraphicsAPI = GRAPHICS_API_DIRECTX11;
 		mOptions.mFullScreen = false;
 		mMeshLibrary.SetAllocator(&mAllocator);
+		size_t a = alignof(Bezier);
 	}
 
 	~Rig3DSampleScene()
@@ -148,6 +187,11 @@ public:
 		mDevice = mRenderer->GetDevice();
 		mDeviceContext = mRenderer->GetDeviceContext();
 
+		mBezier.p0 = vec4f(-4, -4, 0, 0);
+		mBezier.p1 = vec4f(-4, 4, 0, 0);
+		mBezier.p2 = vec4f(4, -4, 0, 0);
+		mBezier.p3 = vec4f(4, 4, 0, 0);
+
 		VOnResize();
 
 		InitializeGeometry();
@@ -157,41 +201,67 @@ public:
 
 	void InitializeGeometry()
 	{
-		BezierVertex vertices[VERTEX_COUNT];
+		// ---- Bezier
 
-		Bezier bezier;
-		//bezier.p0 = vec4fa(-4, -4, 0, 0);
-		//bezier.p2 = vec4fa(-8,  4, 0, 0);
-		//bezier.p3 = vec4fa( 4, -4, 0, 0);
-		//bezier.p1 = vec4fa( 8,  4, 0, 0);
+		// allocate a sizeof BEZIER_VERTEX_COUNT * 2 to simplify our upcoming loop.
+		uint16_t bezierIndices[BEZIER_VERTEX_COUNT * 2];
 
-		bezier.p0 = vec4fa(-4, -4, 0, 0);
-		bezier.p1 = vec4fa(-4,  4, 0, 0);
-		bezier.p2 = vec4fa( 4, -4, 0, 0);
-		bezier.p3 = vec4fa( 4,  4, 0, 0);
-
-
-		vec4fa point;
-
-		// allocate a sizeof VERTEX_COUNT * 2 to simplify our upcoming loop.
-		uint16_t indices[VERTEX_COUNT * 2];
-
-		float t;
-		for (size_t i = 0, j = 0; i < VERTEX_COUNT; i++, j += 2)
+		for (size_t i = 0, j = 0; i < BEZIER_VERTEX_COUNT; i++, j += 2)
 		{
-			t = (float)i / (VERTEX_COUNT - 1);
-			bezier.EvaluateSIMD(t, &point);
+			mBezierVertices[i].mColor = { 1.0f, 1.0f, 0.0f };
+			mBezierVertices[i].mPosition = vec3f();
 
-			vertices[i].mPosition = { point.x, point.y, 0.0f };	// Front Top Left
-			vertices[i].mColor = { 1.0f, 1.0f, 0.0f };
-
-			indices[j] = i;
-			indices[j + 1] = i + 1;
+			bezierIndices[j] = i;
+			bezierIndices[j + 1] = i + 1;
 		}
 
 		mMeshLibrary.NewMesh(&mBezierMesh, mRenderer);
-		mRenderer->VSetMeshVertexBufferData(mBezierMesh, vertices, sizeof(BezierVertex) * VERTEX_COUNT, sizeof(BezierVertex), GPU_MEMORY_USAGE_DYNAMIC);
-		mRenderer->VSetMeshIndexBufferData(mBezierMesh, indices, INDEX_COUNT, GPU_MEMORY_USAGE_STATIC);
+		mRenderer->VSetMeshVertexBufferData(mBezierMesh, mBezierVertices, sizeof(BezierVertex) * BEZIER_VERTEX_COUNT, sizeof(BezierVertex), GPU_MEMORY_USAGE_DEFAULT);
+		mRenderer->VSetMeshIndexBufferData(mBezierMesh, bezierIndices, BEZIER_INDEX_COUNT, GPU_MEMORY_USAGE_DEFAULT);
+
+		// -- Handles
+
+		uint16_t handlesIndices[HANDLES_INDEX_COUNT];
+
+		for (size_t i = 0; i < HANDLES_VERTEX_COUNT; i++)
+		{
+			mHandlesVertices[i].mColor = { 0.5f, 0.5f, 0.5f };
+			mHandlesVertices[i].mPosition = vec3f(1);
+
+			handlesIndices[i] = i;
+		}
+
+		mMeshLibrary.NewMesh(&mHandlesMesh, mRenderer);
+		mRenderer->VSetMeshVertexBufferData(mHandlesMesh, mHandlesVertices, sizeof(BezierVertex) * HANDLES_VERTEX_COUNT, sizeof(BezierVertex), GPU_MEMORY_USAGE_DEFAULT);
+		mRenderer->VSetMeshIndexBufferData(mHandlesMesh, handlesIndices, HANDLES_INDEX_COUNT, GPU_MEMORY_USAGE_DEFAULT);
+
+		// -- Circle
+
+		BezierVertex circleVertices[CIRCLE_VERTEX_COUNT];
+		uint16_t circleIndices[CIRCLE_INDEX_COUNT];
+
+		circleVertices[0].mColor = { 0.6f, 0.6f, 0.6f };
+		circleVertices[0].mPosition = vec3f();
+
+		float t;
+		auto index = 0;
+		for (size_t i = 1; i < CIRCLE_VERTEX_COUNT; i++)
+		{
+			t = -static_cast<float>(i) * 2 * PI / (CIRCLE_VERTEX_COUNT - 1);
+			
+			circleVertices[i].mColor = { 0.6f, 0.6f, 0.6f };
+			circleVertices[i].mPosition = { cos(t), sin(t), 0.0f };
+
+			circleIndices[index++] = 0;
+			circleIndices[index++] = i;
+			circleIndices[index++] = i + 1;
+		}
+
+		circleIndices[index - 1] = 1;
+
+		mMeshLibrary.NewMesh(&mCircleMesh, mRenderer);
+		mRenderer->VSetMeshVertexBufferData(mCircleMesh, circleVertices, sizeof(BezierVertex) * CIRCLE_VERTEX_COUNT, sizeof(BezierVertex), GPU_MEMORY_USAGE_DEFAULT);
+		mRenderer->VSetMeshIndexBufferData(mCircleMesh, circleIndices, CIRCLE_INDEX_COUNT, GPU_MEMORY_USAGE_DEFAULT);
 	}
 
 	void InitializeShaders()
@@ -258,37 +328,77 @@ public:
 		mMatrixBuffer.mProjection = mat4f::normalizedOrthographicLH(-5, 5, -5, 5, 0.1f, 100.0f).transpose();
 	}
 
+	vec3f ScreenToWorldPosition(ScreenPoint p)
+	{
+		return vec3f(
+			(static_cast<float>(p.x) / mOptions.mWindowWidth - 0.5f) * 10,
+			-(static_cast<float>(p.y) / mOptions.mWindowHeight - 0.5f) * 10,
+			0
+		);
+	}
+
+	vec4f mCircleScale;
 	void VUpdate(double milliseconds) override
 	{
+		auto input = &Input::SharedInstance();
+
+		vec4f point;
 		vec3f position(0.0f, 0.0f, 0.0f);
 
-		BezierVertex vertices[VERTEX_COUNT];
+		mCircleScale.x = 30.0f / mOptions.mWindowWidth;
+		mCircleScale.y = 30.0f / mOptions.mWindowHeight;
+		mCircleScale.z = 1.0f;
 
-		Bezier bezier;
-		bezier.p0 = vec4fa(-4, -4, 0, 0);
-		bezier.p1 = vec4fa(-4, 4, 0, 0);
-		bezier.p2 = vec4fa(4, -4, 0, 0);
-		bezier.p3 = vec4fa(4, 4, 0, 0);
+		auto mousePos = ScreenToWorldPosition(input->mousePosition);
 
-		vec4fa point;
-
-		// allocate a sizeof VERTEX_COUNT * 2 to simplify our upcoming loop.
-		uint16_t indices[VERTEX_COUNT * 2];
-
-		float t;
-		for (size_t i = 0, j = 0; i < VERTEX_COUNT; i++, j += 2)
+		static auto pIndex = -1;
+		if (input->GetMouseButtonDown(MOUSEBUTTON_LEFT))
 		{
-			t = (float)i / (VERTEX_COUNT - 1);
-			bezier.EvaluateSIMD(t, &point);
+			auto minDist = 10000.0f;
+			auto minIndex = -1;
+			for (size_t i = 0; i < 4; i++)
+			{
+				auto p = vec3f(mBezier.p[i].x, mBezier.p[i].y, 0);
+				auto dist = min(minDist, (mousePos - p).magnitude2());
 
-			vertices[i].mPosition = { point.x, point.y, point.z }; // Front Top Left
-			vertices[i].mColor = { 1.0f, 1.0f, 0.0f };
+				if (dist < minDist)
+				{
+					minDist = dist;
+					minIndex = i;
+				}
+			}
 
-			indices[j] = i;
-			indices[j + 1] = i + 1;
+			if (minDist < .025f)
+			{
+				pIndex = minIndex;
+			}
+		} else if (input->GetMouseButtonUp(MOUSEBUTTON_LEFT))
+		{
+			pIndex = -1;
 		}
 
+		if (pIndex > -1)
+		{
+			mBezier.p[pIndex].x = mousePos.x;
+			mBezier.p[pIndex].y = mousePos.y;
+		}
 
+		for (size_t i = 0; i < 4; i++)
+		{
+			mHandlesVertices[i].mPosition.x = mBezier.p[i].x;
+			mHandlesVertices[i].mPosition.y = mBezier.p[i].y;
+		}
+
+		float t;
+		for (size_t i = 0, j = 0; i < BEZIER_VERTEX_COUNT; i++, j += 2)
+		{
+			t = static_cast<float>(i) / (BEZIER_VERTEX_COUNT - 1);
+			
+			mBezier.EvaluateSIMD(t, &point);
+			mBezier.Evaluate(t, &point);
+
+			mBezierVertices[i].mPosition = { point.x, point.y, point.z };
+		}
 
 		mMatrixBuffer.mWorld = mat4f::translate(position).transpose();
 	}
@@ -299,13 +409,13 @@ public:
 
 		// Set up the input assembler
 		mDeviceContext->IASetInputLayout(mInputLayout);
-		mRenderer->VSetPrimitiveType(GPU_PRIMITIVE_TYPE_LINE);
+		mRenderer->VSetPrimitiveType(GPU_PRIMITIVE_TYPE_TRIANGLE);
 
 		mDeviceContext->RSSetViewports(1, &mRenderer->GetViewport());
 		mDeviceContext->OMSetRenderTargets(1, mRenderer->GetRenderTargetView(), mRenderer->GetDepthStencilView());
 		mDeviceContext->ClearRenderTargetView(*mRenderer->GetRenderTargetView(), color);
 		mDeviceContext->ClearDepthStencilView(
-			mRenderer->GetDepthStencilView(),
+		mRenderer->GetDepthStencilView(),
 			D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL,
 			1.0f,
 			0);
@@ -319,16 +429,39 @@ public:
 			NULL,
 			&mMatrixBuffer,
 			0,
-			0);
+			0); 
 
 		mDeviceContext->VSSetConstantBuffers(
 			0,
 			1,
 			&mConstantBuffer);
 
-		mRenderer->VBindMesh(mBezierMesh);
+		// Bezier
+		mDeviceContext->UpdateSubresource(static_cast<DX11Mesh*>(mBezierMesh)->mVertexBuffer, 0, NULL, &mBezierVertices, 0, 0);
 
+		mRenderer->VSetPrimitiveType(GPU_PRIMITIVE_TYPE_LINE);
+		mRenderer->VBindMesh(mBezierMesh);
 		mRenderer->VDrawIndexed(0, mBezierMesh->GetIndexCount());
+
+		// Handles
+		mDeviceContext->UpdateSubresource(static_cast<DX11Mesh*>(mHandlesMesh)->mVertexBuffer, 0, NULL, &mHandlesVertices, 0, 0);
+
+		mRenderer->VSetPrimitiveType(GPU_PRIMITIVE_TYPE_LINE);
+		mRenderer->VBindMesh(mHandlesMesh);
+		mRenderer->VDrawIndexed(0, mHandlesMesh->GetIndexCount());
+
+		// Circles
+		mRenderer->VSetPrimitiveType(GPU_PRIMITIVE_TYPE_TRIANGLE);
+		for (size_t i = 0; i < 4; i++)
+		{
+			mMatrixBuffer.mWorld = (mat4f::scale(mCircleScale) * mat4f::translate(mBezier.p[i])).transpose();
+			mDeviceContext->UpdateSubresource(mConstantBuffer, 0, NULL, &mMatrixBuffer, 0, 0);
+
+			mRenderer->VBindMesh(mCircleMesh);
+			mRenderer->VDrawIndexed(0, mCircleMesh->GetIndexCount());
+		}
+
+
 		mRenderer->VSwapBuffers();
 	}
 

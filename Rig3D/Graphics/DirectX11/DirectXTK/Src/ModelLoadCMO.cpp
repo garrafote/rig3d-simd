@@ -65,7 +65,7 @@ namespace VSD3DStarter
     //      UINT - VB Count
     //      { [VB Count]
     //          UINT - Number of verts in VB
-    //          Vertex[] - Array of vertices
+    //          Vertex[] - Array of mBezierVertices
     //      }
     //      UINT - Skinning VB Count
     //      { [Skinning VB Count]

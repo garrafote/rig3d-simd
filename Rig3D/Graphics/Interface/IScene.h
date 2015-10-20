@@ -26,13 +26,14 @@ namespace Rig3D
 }
 
 #define DECLARE_MAIN(a)													\
-Rig3D::IScene *gRig3DScene = 0;											\
+Rig3D::IScene* gRig3DScene = 0;											\
 int CALLBACK WinMain(HINSTANCE hInstance,								\
                      HINSTANCE hPrevInstance,							\
                      PSTR cmdLine,										\
                      int showCmd)										\
 {																		\
-	a *gRig3DScene = new a;												\
+	a instance;															\
+	gRig3DScene = &instance;											\
     Rig3D::Engine engine = Rig3D::Engine();								\
 	engine.Initialize(hInstance,										\
 						hPrevInstance,									\
@@ -40,6 +41,5 @@ int CALLBACK WinMain(HINSTANCE hInstance,								\
 						showCmd,										\
 						gRig3DScene->mOptions);							\
 	engine.RunScene(gRig3DScene);										\
-    delete gRig3DScene;													\
     return 0;															\
 }	

@@ -84,7 +84,7 @@ namespace cliqCity
 			operator Vector2();
 		};
 
-		struct CGM_DLL Vector4
+		struct __declspec(align(16)) CGM_DLL Vector4
 		{
 			union
 			{

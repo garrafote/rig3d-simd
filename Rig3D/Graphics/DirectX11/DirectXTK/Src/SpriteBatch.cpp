@@ -790,7 +790,7 @@ void XM_CALLCONV SpriteBatch::Impl::RenderSprite(_In_ SpriteInfo const* sprite, 
         rotationMatrix2 = g_XMIdentityR1;
     }
     
-    // The four corner vertices are computed by transforming these unit-square positions.
+    // The four corner mBezierVertices are computed by transforming these unit-square positions.
     static XMVECTORF32 cornerOffsets[VerticesPerSprite] =
     {
         { 0, 0 },
@@ -811,7 +811,7 @@ void XM_CALLCONV SpriteBatch::Impl::RenderSprite(_In_ SpriteInfo const* sprite, 
 
     int mirrorBits = flags & 3;
 
-    // Generate the four output vertices.
+    // Generate the four output mBezierVertices.
     for (int i = 0; i < VerticesPerSprite; i++)
     {
         // Calculate position.
