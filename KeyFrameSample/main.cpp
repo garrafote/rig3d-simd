@@ -10,92 +10,107 @@
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <fstream>
+#include <fvec.h>
 
 #define PI 3.1415926535f
+
+#define SHUFFLE_PARAM(x, y, z, w) ((x) | ((y) << 2) | ((z) << 4) | ((w) << 6))
+#define _mm_replicate_x_ps(v) _mm_shuffle_ps((v), (v), SHUFFLE_PARAM(0, 0, 0, 0))
+#define _mm_replicate_y_ps(v) _mm_shuffle_ps((v), (v), SHUFFLE_PARAM(1, 1, 1, 1))
+#define _mm_replicate_z_ps(v) _mm_shuffle_ps((v), (v), SHUFFLE_PARAM(2, 2, 2, 2))
+#define _mm_replicate_w_ps(v) _mm_shuffle_ps((v), (v), SHUFFLE_PARAM(3, 3, 3, 3))
+#define _mm_add_mul_ps(a, b, c) _mm_add_ps(_mm_mul_ps((a), (b)), (c))
 
 #if defined(_MSC_VER)
 #define ALIGNED(x) __declspec(align(x))
 // other Alignment here..
 #endif
 
+typedef ALIGNED(16) cliqCity::graphicsMath::Vector4 vec4fa;
+typedef ALIGNED(16) cliqCity::graphicsMath::Matrix4 mat4fa;
+
 using namespace Rig3D;
-using namespace cliqCity::graphicsMath;
 
 // cubic degree bezier curve
-class Bezier
+class ALIGNED(16) Bezier
 {
 public:
-	union ALIGNED(16)
-	{
-		struct
-		{
-			Vector4 b0;
-			Vector4 b1;
-			Vector4 b2;
-			Vector4 b3;
-		};
-		Matrix4 m;
-	};
+	vec4fa p0;
+	vec4fa p1;
+	vec4fa p2;
+	vec4fa p3;
 
-	Bezier()
-	{
+	Bezier() { }
+	~Bezier() { }
 
+	void Evaluate(const float time, vec4fa* result)
+	{
+		static mat4fa mat = mat4fa(
+			 1,  0,  0,  0,
+			-3,  3,  0,  0,
+			 3, -6,  3,  0, 
+			-1,  3, -3,  1);
+
+		vec4fa t(1, time, time*time, time*time*time);
 	}
 
-	~Bezier()
+	// Equation based on this article:
+	// http://www.idav.ucdavis.edu/education/CAGDNotes/Matrix-Cubic-Bezier-Curve/Matrix-Cubic-Bezier-Curve.html
+	void EvaluateSIMD(const float time, vec4fa* result)
 	{
-		
-	}
+		static mat4fa m = mat4fa(
+			 1,  0,  0,  0,
+			-3,  3,  0,  0,
+			 3, -6,  3,  0, 
+			-1,  3, -3,  1);
 
-	void Evaluate(const float t, Vector4 result)
-	{
-		
-	}
+		// (1, t, t^2, t^3)
+		__m128 t = _mm_set_ps(time*time*time, time*time, time, 1);
 
-	void Mult(const Vector4 vec, const Matrix4 mat)
-	{
-		const __m128& MRow1 = _mm_load_ps(mat.u.data);
+		__m128 a = _mm_load_ps(m.u.data);
 
-		//const __m128& xxxx = _mm_replicate_x_ps(v);
+		// Vector Matrix multiplication between t and M.
+		__m128 tM = _mm_mul_ps(_mm_replicate_x_ps(t), _mm_load_ps(m.u.data));
+		tM = _mm_add_mul_ps(_mm_replicate_y_ps(t), _mm_load_ps(m.v.data), tM);
+		tM = _mm_add_mul_ps(_mm_replicate_z_ps(t), _mm_load_ps(m.w.data), tM);
+		tM = _mm_add_mul_ps(_mm_replicate_w_ps(t), _mm_load_ps(m.t.data), tM);
+
+		// Vector Matrix multiplication between the result matrix of t*M and 
+		// the matrix P formed by the control points (p0 ... p3)
+		__m128 tMP = _mm_mul_ps(_mm_replicate_x_ps(tM), _mm_load_ps(p0.data));
+		tMP = _mm_add_mul_ps(_mm_replicate_y_ps(tM), _mm_load_ps(p1.data), tMP);
+		tMP = _mm_add_mul_ps(_mm_replicate_z_ps(tM), _mm_load_ps(p2.data), tMP);
+		tMP = _mm_add_mul_ps(_mm_replicate_w_ps(tM), _mm_load_ps(p3.data), tMP);
+
+		_mm_store_ps(result->data, tMP);
 	}
 };
 
-
 static const int VERTEX_COUNT = 100;
 static const int INDEX_COUNT = (VERTEX_COUNT - 1) * 2;
-static const float ANIMATION_DURATION = 20000.0f; // 20 Seconds
-static const int KEY_FRAME_COUNT = 10;
 
 class Rig3DSampleScene : public IScene, public virtual IRendererDelegate
 {
 public:
 
-	typedef cliqCity::graphicsMath::Vector2 vec2f;
 	typedef cliqCity::memory::LinearAllocator LinearAllocator;
 
-	struct SampleVertex
+	struct BezierVertex
 	{
 		vec3f mPosition;
 		vec3f mColor;
 	};
 
-	struct SampleMatrixBuffer
+	struct BezierMatrixBuffer
 	{
 		mat4f mWorld;
 		mat4f mProjection;
 	};
 
-	struct KeyFrame
-	{
-		quatf mRotation;
-		vec3f mPosition;
-		float mTime;
-	};
 
-	SampleMatrixBuffer		mMatrixBuffer;
-	IMesh*					mCubeMesh;
+	BezierMatrixBuffer		mMatrixBuffer;
+	IMesh*					mBezierMesh;
 	LinearAllocator			mAllocator;
-	KeyFrame				mKeyFrames[KEY_FRAME_COUNT];
 
 	DX3D11Renderer*			mRenderer;
 	ID3D11Device*			mDevice;
@@ -105,20 +120,15 @@ public:
 	ID3D11VertexShader*		mVertexShader;
 	ID3D11PixelShader*		mPixelShader;
 
-	float					mAnimationTime;
-	bool					mIsPlaying;
-
 	MeshLibrary<LinearAllocator> mMeshLibrary;
 
 	Rig3DSampleScene() : mAllocator(1024)
 	{
-		mOptions.mWindowCaption = "Key Frame Sample";
+		mOptions.mWindowCaption = "SIMD Bezier";
 		mOptions.mWindowWidth = 800;
 		mOptions.mWindowHeight = 600;
 		mOptions.mGraphicsAPI = GRAPHICS_API_DIRECTX11;
 		mOptions.mFullScreen = false;
-		mAnimationTime = 0.0f;
-		mIsPlaying = false;
 		mMeshLibrary.SetAllocator(&mAllocator);
 	}
 
@@ -140,84 +150,48 @@ public:
 
 		VOnResize();
 
-		InitializeAnimation();
 		InitializeGeometry();
 		InitializeShaders();
 		InitializeCamera();
 	}
 
-	void InitializeAnimation()
-	{
-		std::ifstream file("Animation\\keyframe-input.txt");
-
-		if (!file.is_open()) {
-			printf("ERROR OPENING FILE");
-			return;
-		}
-
-		char line[100];
-		int i = 0;
-		float radians = (PI / 180.f);
-
-		while (file.good()) {
-			file.getline(line, 100);
-			if (line[0] == '\0') {
-				continue;
-			}
-
-			float time, angle;
-			vec3f position, axis;
-			sscanf_s(line, "%f %f %f %f %f %f %f %f\n", &time, &position.x, &position.y, &position.z, &axis.x, &axis.y, &axis.z, &angle);
-			mKeyFrames[i].mTime = time;
-			mKeyFrames[i].mPosition = position;
-			mKeyFrames[i].mRotation = cliqCity::graphicsMath::normalize(quatf::angleAxis(angle * radians, axis));
-			i++;
-		}
-
-		file.close();
-
-		mMatrixBuffer.mWorld = mat4f::translate(mKeyFrames[1].mPosition).transpose();
-		mAnimationTime = 0.0f;
-		mIsPlaying = false;
-	}
-
 	void InitializeGeometry()
 	{
-		SampleVertex vertices[VERTEX_COUNT];
+		BezierVertex vertices[VERTEX_COUNT];
 
 		Bezier bezier;
-		bezier.b0.x = 0;
-		bezier.m.u.y = 1;
-		bezier.b0.data[2] = 2;
+		//bezier.p0 = vec4fa(-4, -4, 0, 0);
+		//bezier.p2 = vec4fa(-8,  4, 0, 0);
+		//bezier.p3 = vec4fa( 4, -4, 0, 0);
+		//bezier.p1 = vec4fa( 8,  4, 0, 0);
 
+		bezier.p0 = vec4fa(-4, -4, 0, 0);
+		bezier.p1 = vec4fa(-4,  4, 0, 0);
+		bezier.p2 = vec4fa( 4, -4, 0, 0);
+		bezier.p3 = vec4fa( 4,  4, 0, 0);
+
+
+		vec4fa point;
 
 		// allocate a sizeof VERTEX_COUNT * 2 to simplify our upcoming loop.
 		uint16_t indices[VERTEX_COUNT * 2];
 
-		auto x = -4.0f;
-		auto y = -4.0f;
-		auto x1 = 4.0f;
-		auto y1 = 4.0f;
-		auto dx = (x1 - x) / VERTEX_COUNT;
-		auto dy = (y1 - y) / VERTEX_COUNT;
-
+		float t;
 		for (size_t i = 0, j = 0; i < VERTEX_COUNT; i++, j += 2)
 		{
+			t = (float)i / (VERTEX_COUNT - 1);
+			bezier.EvaluateSIMD(t, &point);
 
-
-			vertices[i].mPosition = { x, y, 0.0f };	// Front Top Left
+			vertices[i].mPosition = { point.x, point.y, 0.0f };	// Front Top Left
 			vertices[i].mColor = { 1.0f, 1.0f, 0.0f };
 
 			indices[j] = i;
 			indices[j + 1] = i + 1;
-
-			x += dx;
-			y += dy;
 		}
 
-		mMeshLibrary.NewMesh(&mCubeMesh, mRenderer);
-		mRenderer->VSetMeshVertexBufferData(mCubeMesh, vertices, sizeof(SampleVertex) * VERTEX_COUNT, sizeof(SampleVertex), GPU_MEMORY_USAGE_DYNAMIC);
-		mRenderer->VSetMeshIndexBufferData(mCubeMesh, indices, INDEX_COUNT, GPU_MEMORY_USAGE_STATIC);
+		mMeshLibrary.NewMesh(&mBezierMesh, mRenderer);
+		mRenderer->VSetMeshVertexBufferData(mBezierMesh, vertices, sizeof(BezierVertex) * VERTEX_COUNT, sizeof(BezierVertex), GPU_MEMORY_USAGE_DYNAMIC);
+		mRenderer->VSetMeshIndexBufferData(mBezierMesh, indices, INDEX_COUNT, GPU_MEMORY_USAGE_STATIC);
 	}
 
 	void InitializeShaders()
@@ -288,33 +262,35 @@ public:
 	{
 		vec3f position(0.0f, 0.0f, 0.0f);
 
-		static SampleVertex vertices[VERTEX_COUNT];
+		BezierVertex vertices[VERTEX_COUNT];
 
-		auto x = -4.0f;
-		auto y = -4.0f;
-		auto x1 = 4.0f;
-		auto y1 = 4.0f;
-		auto dx = (x1 - x) / VERTEX_COUNT;
-		auto dy = (y1 - y) / VERTEX_COUNT;
+		Bezier bezier;
+		bezier.p0 = vec4fa(-4, -4, 0, 0);
+		bezier.p1 = vec4fa(-4, 4, 0, 0);
+		bezier.p2 = vec4fa(4, -4, 0, 0);
+		bezier.p3 = vec4fa(4, 4, 0, 0);
 
+		vec4fa point;
+
+		// allocate a sizeof VERTEX_COUNT * 2 to simplify our upcoming loop.
+		uint16_t indices[VERTEX_COUNT * 2];
+
+		float t;
 		for (size_t i = 0, j = 0; i < VERTEX_COUNT; i++, j += 2)
 		{
-			vertices[i].mPosition = { x, y, 0.0f };	// Front Top Left
+			t = (float)i / (VERTEX_COUNT - 1);
+			bezier.EvaluateSIMD(t, &point);
+
+			vertices[i].mPosition = { point.x, point.y, point.z }; // Front Top Left
 			vertices[i].mColor = { 1.0f, 1.0f, 0.0f };
 
-			x += dx;
-			y += dy;
+			indices[j] = i;
+			indices[j + 1] = i + 1;
 		}
+
+
 
 		mMatrixBuffer.mWorld = mat4f::translate(position).transpose();
-
-		char str[256];
-		sprintf_s(str, "Milliseconds %f", mAnimationTime);
-		mRenderer->SetWindowCaption(str);
-
-		if (Input::SharedInstance().GetKeyDown(KEYCODE_LEFT)) {
-			InitializeAnimation();
-		}
 	}
 
 	void VRender() override
@@ -324,8 +300,6 @@ public:
 		// Set up the input assembler
 		mDeviceContext->IASetInputLayout(mInputLayout);
 		mRenderer->VSetPrimitiveType(GPU_PRIMITIVE_TYPE_LINE);
-
-		//mDeviceContext->RSSetViewports(1, &mRenderer->GetViewport());
 
 		mDeviceContext->RSSetViewports(1, &mRenderer->GetViewport());
 		mDeviceContext->OMSetRenderTargets(1, mRenderer->GetRenderTargetView(), mRenderer->GetDepthStencilView());
@@ -352,9 +326,9 @@ public:
 			1,
 			&mConstantBuffer);
 
-		mRenderer->VBindMesh(mCubeMesh);
+		mRenderer->VBindMesh(mBezierMesh);
 
-		mRenderer->VDrawIndexed(0, mCubeMesh->GetIndexCount());
+		mRenderer->VDrawIndexed(0, mBezierMesh->GetIndexCount());
 		mRenderer->VSwapBuffers();
 	}
 
@@ -365,7 +339,7 @@ public:
 
 	void VShutdown() override
 	{
-		mCubeMesh->~IMesh();
+		mBezierMesh->~IMesh();
 		mAllocator.Free();
 	}
 };
